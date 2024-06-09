@@ -1,7 +1,7 @@
 from option import args
 from importlib import import_module
 
-from utils.utils import mkExpDir, save_model, calc_psnr_and_ssim_torch_metric
+from utils.utils import mkExpDir, save_model, calc_psnr_and_ssim_torch_metric, forward_chop
 from dataset.dataset import Train_Dataset, Test_Dataset
 from loss import get_loss_dict
 import os
@@ -25,7 +25,7 @@ if __name__ == '__main__':
     # Define dataset
     train_dataset = Train_Dataset(image_path=args.dir_data, 
                                 patch_size=args.patch_size, 
-                                scale=args.scale)
+                                scale=args.scale[0])
 
     train_dataloader = DataLoader(train_dataset,
                             batch_size=args.batch_size,
@@ -34,11 +34,11 @@ if __name__ == '__main__':
     
     # Eval dataset
     data_test = args.data_test[0]
-    test_path_HR = os.path.join(args.dir_test, data_test, f'x{args.scale}', 'HR')
-    test_path_HR = os.path.join(args.dir_test, data_test, f'x{args.scale}', 'LR')
+    test_path_HR = os.path.join(args.dir_test, data_test, f'x{args.scale[0]}', 'HR')
+    test_path_LR = os.path.join(args.dir_test, data_test, f'x{args.scale[0]}', 'LR')
     
-    eval_dataset = Test_Dataset(image_path_HR=args.data_eval_H, 
-                                image_path_LR=args.data_eval_L)
+    eval_dataset = Test_Dataset(image_path_HR=test_path_HR, 
+                                image_path_LR=test_path_LR)
 
     eval_dataloader = DataLoader(eval_dataset,
                             batch_size=1,
@@ -70,6 +70,7 @@ if __name__ == '__main__':
     
     # Define loss function
     weight, loss_type = args.loss.split('*')
+    weight = float(weight)
     loss_all = get_loss_dict(weight, loss_type, logger)
     
     # Summary Writer
@@ -99,7 +100,7 @@ if __name__ == '__main__':
             )
 
         model.load_state_dict(data['model'])
-        logger.info(f'Load Pretrained model at epoch {data['epoch']}')
+        logger.info(f"Load Pretrained model at epoch {data['epoch']}")
         count = data['step']
         start_epoch = data['epoch']
         log_loss = data['loss']
@@ -118,7 +119,7 @@ if __name__ == '__main__':
         max_ssim_epoch = 0
         logger.info('USING FRESH MODEL')
 
-    for epoch in range(start_epoch+1, args.num_epochs+1):
+    for epoch in range(start_epoch+1, args.epochs+1):
         model.train()
         for imgs in train_dataloader:
             hr, lr = imgs
@@ -127,7 +128,7 @@ if __name__ == '__main__':
 
             sr = model(lr)
 
-            rec_loss = args.rec_w * loss_all['rec_loss'](sr, hr)
+            rec_loss = weight * loss_all['rec_loss'](sr, hr)
             loss = rec_loss
 
             # if epoch > args.num_init_epochs:
@@ -144,7 +145,7 @@ if __name__ == '__main__':
             if count % args.print_every == 0:
                 logger.info('Epoch {}/{}, Iter {}: Loss = {}, lr = {}'.format(
                     epoch,
-                    args.num_epochs,
+                    args.epochs,
                     count,
                     loss.mean().item(),
                     scheduler.get_last_lr(),
@@ -161,13 +162,13 @@ if __name__ == '__main__':
 
         scheduler.step()
 
-        if epoch % args.val_every == 0:
+        if epoch % args.test_every == 0:
             logger.info(f'Evaluate at epoch {epoch}!')
             model.eval()
             with torch.no_grad():
                 psnr, ssim, cnt = 0., 0., 0
 
-                # img_eval_dir = os.path.join(args.save_dir, 'model_eval', f'{epoch}')
+                # img_eval_dir = os.path.join(args.save, 'model_eval', f'{epoch}')
                 # os.mkdir(img_eval_dir)
 
                 for imgs in eval_dataloader:
@@ -178,8 +179,11 @@ if __name__ == '__main__':
                     
                     h_old = lr.size(2)
                     w_old = lr.size(3)
-                        
-                    sr = model(lr)
+                       
+                    if args.chop: 
+                        sr = forward_chop(lr, model=model, scale=args.scale[0])
+                    else:
+                        sr = model(lr)
 
                     ### calculate psnr and ssim
                     _psnr, _ssim = calc_psnr_and_ssim_torch_metric(sr.detach(), hr.detach())
@@ -206,7 +210,7 @@ if __name__ == '__main__':
                         'max_ssim_epoch': max_ssim_epoch,
                     }
                     save_model(args.save_all, model, optimizer, scheduler, count, epoch, log_loss, eval_data,
-                            os.path.join(args.save_dir, 'model', 'max_psnr_model.pth'))
+                            os.path.join(args.save, 'model', 'max_psnr_model.pth'))
                 if ssim_avg > max_ssim:
                     max_ssim = ssim_avg
                     max_ssim_epoch = epoch
@@ -217,7 +221,7 @@ if __name__ == '__main__':
                         'max_ssim_epoch': max_ssim_epoch,
                     }
                     save_model(args.save_all, model, optimizer, scheduler, count, epoch, log_loss, eval_data,
-                            os.path.join(args.save_dir, 'model', 'max_ssim_model.pth'))
+                            os.path.join(args.save, 'model', 'max_ssim_model.pth'))
                     
                 logger.info('Eval  PSNR (max): %.3f (%d) \t SSIM (max): %.4f (%d)'
                         %(max_psnr, max_psnr_epoch, max_ssim, max_ssim_epoch))
@@ -233,5 +237,5 @@ if __name__ == '__main__':
                 'max_ssim_epoch': max_ssim_epoch,
             }
             save_model(args.save_all, model, optimizer, scheduler, count, epoch, log_loss, eval_data,
-                            os.path.join(args.save_dir, 'model', 'current_model.pth'))
+                            os.path.join(args.save, 'model', 'current_model.pth'))
 

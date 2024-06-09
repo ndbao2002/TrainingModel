@@ -86,6 +86,8 @@ parser.add_argument('--reset', action='store_true',
                     help='reset the training')
 parser.add_argument('--test_every', type=int, default=5,
                     help='do test per every N epoch')
+parser.add_argument('--save_every', type=int, default=5,
+                    help='save model every N epoch')
 parser.add_argument('--epochs', type=int, default=3000,
                     help='number of epochs to train')
 parser.add_argument('--batch_size', type=int, default=16,
